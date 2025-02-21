@@ -95,6 +95,16 @@ The configuration file should contain a list of endpoints, each with the followi
 - `headers` (dictionary, optional): HTTP headers to include in the request.
 - `body` (string, optional): The JSON-encoded body for POST, PUT, or PATCH requests.
 
+## Why were Changes Made
+
+- Domain parsing with a combination of `netloc` and `split` to parse URLs without a port number.
+- File and YAML error handling while reading the configuration file.
+- `URL` and `Name` fields are required in the configuration file, handled error if fields were missing.
+- The endpoint was displayed as UP only on the basis of the repsonse code, modified it to check latency as well.
+- `Domain` is checked in the `check_health` function so that if the URL is missing in the YAML file, it will be logged accordingly.
+- Added a `timeout` parameter to the `requests.request` function to prevent the program from hanging indefinitely.
+- `json.loads()` to parse the string JSON body
+- Added default method as 'GET' and empty header if not provided in the YAML file
 
 ## Notes
 - Ensure that your YAML configuration file is correctly formatted. The program assumes that the input is a valid YAML file.

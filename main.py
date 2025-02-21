@@ -37,6 +37,7 @@ def load_config(file_path):
         logger.error(f"Error parsing YAML file: {e}")
         sys.exit(1)
 
+
 def check_health(endpoint):
     if 'url' not in endpoint:
         logger.error(f"Missing 'url' in endpoint configuration: {endpoint}")
@@ -52,14 +53,15 @@ def check_health(endpoint):
     body = json.loads(endpoint.get('body')) if endpoint.get('body') else {}
     timeout = endpoint.get('timeout', 1)
 
-    # domain = url.split("//")[-1].split("/")[0]
-    domain = urlparse(endpoint['url']).netloc  # Extract only the domain from the URL
+    domain = urlparse(endpoint['url']).netloc.split(":")[0]  # Extract only the domain from the URL
+
     try:
         start_time = time.time()
         response = requests.request(method, url, headers=headers, json=body, timeout=timeout)
         response_time = time.time() - start_time
 
         if 200 <= response.status_code < 300 and response_time <= 0.5:
+            logger.info(f"Endpoint {url} returned status code {response.status_code} with response time {response_time:.3f}s")
             return domain, "UP", response_time
         else:
             logger.warning(f"Endpoint {url} returned status code {response.status_code} with response time {response_time:.3f}s")
