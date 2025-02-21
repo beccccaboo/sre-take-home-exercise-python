@@ -1,61 +1,125 @@
+import json
+
 import yaml
 import requests
-import time
 from collections import defaultdict
+import logging
+from urllib.parse import urlparse
+from typing import Dict, List
+import time
+import sys
 
-# Function to load configuration from the YAML file
+# Set up logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
 def load_config(file_path):
-    with open(file_path, 'r') as file:
-        return yaml.safe_load(file)
+    """
+    Load configuration from the YAML file.
 
-# Function to perform health checks
-def check_health(endpoint):
-    url = endpoint['url']
-    method = endpoint.get('method')
-    headers = endpoint.get('headers')
-    body = endpoint.get('body')
+    Args:
+        file_path (str): Path to the YAML configuration file.
 
+    Returns:
+        list: List of endpoint configurations.
+
+    Raises:
+        FileNotFoundError: If the configuration file is not found.
+        yaml.YAMLError: If there's an error parsing the YAML file.
+    """
     try:
-        response = requests.request(method, url, headers=headers, json=body)
-        if 200 <= response.status_code < 300:
-            return "UP"
+        with open(file_path, 'r') as file:
+            return yaml.safe_load(file)
+    except FileNotFoundError:
+        logger.error(f"Configuration file not found: {file_path}")
+        sys.exit(1)
+    except yaml.YAMLError as e:
+        logger.error(f"Error parsing YAML file: {e}")
+        sys.exit(1)
+
+def check_health(endpoint):
+    if 'url' not in endpoint:
+        logger.error(f"Missing 'url' in endpoint configuration: {endpoint}")
+        return None, "DOWN", None
+
+    if 'name' not in endpoint:
+        logger.error(f"Missing 'name' in endpoint configuration: {endpoint}")
+        return None, "DOWN", None
+
+    url = endpoint['url']
+    method = endpoint.get('method', 'GET')
+    headers = endpoint.get('headers', {})
+    body = json.loads(endpoint.get('body')) if endpoint.get('body') else {}
+    timeout = endpoint.get('timeout', 1)
+
+    # domain = url.split("//")[-1].split("/")[0]
+    domain = urlparse(endpoint['url']).netloc  # Extract only the domain from the URL
+    try:
+        start_time = time.time()
+        response = requests.request(method, url, headers=headers, json=body, timeout=timeout)
+        response_time = time.time() - start_time
+
+        if 200 <= response.status_code < 300 and response_time <= 0.5:
+            return domain, "UP", response_time
         else:
-            return "DOWN"
-    except requests.RequestException:
-        return "DOWN"
+            logger.warning(f"Endpoint {url} returned status code {response.status_code} with response time {response_time:.3f}s")
+            return domain, "DOWN", response_time
+    except requests.RequestException as e:
+        logger.error(f"Error checking {url}: {str(e)}")
+        return domain, "DOWN", None
 
-# Main function to monitor endpoints
-def monitor_endpoints(file_path):
-    config = load_config(file_path)
-    domain_stats = defaultdict(lambda: {"up": 0, "total": 0})
 
-    while True:
-        for endpoint in config:
-            domain = endpoint["url"].split("//")[-1].split("/")[0]
-            result = check_health(endpoint)
+def monitor_endpoints(file_path: str) -> None:
+    """
+    Monitor endpoints and log their availability.
 
-            domain_stats[domain]["total"] += 1
-            if result == "UP":
-                domain_stats[domain]["up"] += 1
+    Args:
+        file_path (str): Path to the configuration file.
+    """
+    endpoints: List[Dict] = load_config(file_path)
+    domain_stats: Dict[str, Dict[str, int]] = defaultdict(lambda: {'up': 0, 'down': 0})
+    domain_totals: Dict[str, int] = defaultdict(int)
+    domain_response_times: Dict[str, List[float]] = defaultdict(list)
 
-        # Log cumulative availability percentages
-        for domain, stats in domain_stats.items():
-            availability = round(100 * stats["up"] / stats["total"])
-            print(f"{domain} has {availability}% availability percentage")
+    while True:  # Run until there is a KeyboardInterrupt
+        for endpoint in endpoints:
+            # Perform health check for each endpoint sequentially
+            domain, status, response_time = check_health(endpoint)
+
+            if domain is not None:
+                # Update statistics
+                domain_totals[domain] += 1
+                if status == "UP":
+                    domain_stats[domain]['up'] += 1
+                else:
+                    domain_stats[domain]['down'] += 1
+
+                if response_time is not None:
+                    domain_response_times[domain].append(response_time)
+
+        # Log the availability percentages and average response times
+        for domain in domain_stats:
+            total_count = domain_totals[domain]
+            up_count = domain_stats[domain]['up']
+            availability = (100 * up_count / total_count) if total_count else 0
+
+            avg_response_time = sum(domain_response_times[domain]) / len(domain_response_times[domain]) if domain_response_times[domain] else None
+
+            logger.info(f"{domain} has {round(availability, 2)}% availability percentage")
+            if avg_response_time:
+                logger.info(f"{domain} average response time: {round(avg_response_time, 3)} seconds")
 
         print("---")
+        # Wait for 15 seconds
         time.sleep(15)
 
-# Entry point of the program
 if __name__ == "__main__":
-    import sys
-
     if len(sys.argv) != 2:
-        print("Usage: python monitor.py <config_file_path>")
+        logger.error("Usage: python main.py <config_file_path>")
         sys.exit(1)
 
     config_file = sys.argv[1]
     try:
         monitor_endpoints(config_file)
     except KeyboardInterrupt:
-        print("\nMonitoring stopped by user.")
+        logger.info("\nMonitoring stopped by user.")
